@@ -12,7 +12,7 @@ Minimalist PowerShell module to verify the warranty of a machine from a CLI.
 | Manufacturer | Method | Status |
 |:--|:--|:--|
 | ASUS | EU RMA Portal (HTML + CSRF) | OK |
-| HP | To be implemented | TODO |
+| HP | To be implemented | In Work |
 | Dell | To be implemented | TODO |
 | Lenovo | To be implemented | TODO |
 | Acer | To be implemented | TODO |
@@ -21,25 +21,21 @@ Minimalist PowerShell module to verify the warranty of a machine from a CLI.
 
 ---
 
-## Installation (manual)
+## Installation
 
+#### From PowerShell Gallery
+```powershell
+Install-Module -Name Get-Warranty
+```
+
+#### Manual 
 1. Place the `Get-Warranty/` folder somewhere (ex: `C:\Tools\Get-Warranty`)
 2. Import the module:
 
 ```powershell
 Import-Module "C:\Tools\Get-Warranty\Get-Warranty.psd1" -Force
 ```
-
-Optional: To avoid typing `Import-Module` every time, You can copy the `Get-Warranty` folder into one of the your PS env paths :
-
-```powershell
-$env:PSModulePath -split ';'
-```
-
-#### From PowerShell Gallery
-```powershell
-Install-Module -Name "Get-Warranty"
-```
+> Optional: To avoid typing `Import-Module` every time, You can copy the `Get-Warranty` folder into one of the your PS env paths.
 
 ---
 
