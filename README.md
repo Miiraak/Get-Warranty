@@ -40,19 +40,19 @@ $env:PSModulePath -split ';'
 
 ## Uses
 
-### 1) Check the warranty of the local machine
+#### 1) Check the warranty of the local machine
 
 ```powershell
 Get-Warranty
 ```
 
-### 2) Force a manufacturer + serial number
+#### 2) Force a manufacturer + serial number
 
 ```powershell
 Get-Warranty -Manufacturer asus -Serial "ABCDEFGH1234567"
 ```
 
-### 3) JSON output
+#### 3) JSON output
 
 ```powershell
 Get-Warranty -Manufacturer asus -Serial "ABCDEFGH1234567" -Json
