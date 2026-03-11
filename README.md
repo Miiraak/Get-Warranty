@@ -36,6 +36,11 @@ Optional: To avoid typing `Import-Module` every time, You can copy the `Get-Warr
 $env:PSModulePath -split ';'
 ```
 
+#### From PowerShell Gallery
+```powershell
+Install-Module -Name "Get-Warranty"
+```
+
 ---
 
 ## Uses
