@@ -7,8 +7,8 @@ Minimalist PowerShell module to check the warranty status of a device from the c
   1. **ASCII table** (default) – human-friendly summary.
   2. **JSON** (`-Json` switch) – structured output for integration into scripts and tools.
 - **Two retrieval strategies:**
-  - **Pure HTTP** – fast, no UI; used when the manufacturer's site allows direct form submission (e.g. ASUS EU RMA).
-  - **WebView2 browser** – used when the site requires reCAPTCHA or heavy JavaScript. A browser window opens; the user solves the captcha while the module handles form-filling and data extraction automatically.
+  - **Pure HTTP** – fast, no UI; used when the manufacturer's site allows direct API or form submission (e.g. ASUS EU RMA, HP CSS API).
+  - **WebView2 browser** – fallback when the site requires reCAPTCHA or heavy JavaScript. A browser window opens; the user solves the captcha while the module handles form-filling and data extraction automatically.
 
 ---
 
@@ -17,7 +17,8 @@ Minimalist PowerShell module to check the warranty status of a device from the c
 | Manufacturer | Method | Status |
 |:--|:--|:--|
 | ASUS | HTTP – EU RMA Portal (HTML + CSRF token) | ✅ OK |
-| HP | WebView2 – support.hp.com (reCAPTCHA) | ✅ OK |
+| HP | HTTP – HP CSS API (with API credentials) | ✅ OK |
+| HP | WebView2 – support.hp.com (fallback, reCAPTCHA) | ✅ OK |
 | Dell | WebView2 (planned) | ⏳ TODO |
 | Lenovo | WebView2 (planned) | ⏳ TODO |
 | Acer | WebView2 (planned) | ⏳ TODO |
@@ -32,7 +33,8 @@ Minimalist PowerShell module to check the warranty status of a device from the c
 |:--|:--|
 | **PowerShell** | 5.1 (Windows PowerShell) or 7+ (PowerShell Core on Windows) |
 | **OS** | Windows 10 / 11 (WMI is used for local-device detection) |
-| **WebView2 Runtime** | Required only for providers that use the WebView2 strategy (HP, and future providers). Windows 11 includes it by default. On Windows 10 it is installed alongside Microsoft Edge, or can be installed separately from [Microsoft](https://developer.microsoft.com/en-us/microsoft-edge/webview2/). |
+| **WebView2 Runtime** | Required only when using the WebView2 fallback (no HP API credentials, and future providers). Windows 11 includes it by default. On Windows 10 it is installed alongside Microsoft Edge, or can be installed separately from [Microsoft](https://developer.microsoft.com/en-us/microsoft-edge/webview2/). |
+| **HP API credentials** | *Optional.* Register at the [HP Developer Portal](https://developers.hp.com/hp-warranty-api) to get an API key and secret for fast, no-GUI HP warranty lookups via HTTP. |
 
 The WebView2 .NET SDK is **downloaded automatically** on first use and cached
 under `%LOCALAPPDATA%\Get-Warranty\WebView2`. No manual NuGet step is needed.
@@ -88,7 +90,20 @@ Get-Warranty -Manufacturer asus -Serial "ABCDEFGH1234567"
 Get-Warranty -Manufacturer asus -Serial "ABCDEFGH1234567" -Json
 ```
 
-#### 4) HP warranty check (opens a WebView2 window)
+#### 4) HP warranty check
+
+**With API credentials (fast, no GUI):**
+
+```powershell
+$env:GETWARRANTY_HP_APIKEY    = "your-api-key"
+$env:GETWARRANTY_HP_APISECRET = "your-api-secret"
+Get-Warranty -Manufacturer hp -Serial "CND1234567"
+```
+
+Register at the [HP Developer Portal](https://developers.hp.com/hp-warranty-api)
+to obtain API credentials.
+
+**Without API credentials (WebView2 fallback):**
 
 ```powershell
 Get-Warranty -Manufacturer hp -Serial "CND1234567"
@@ -153,7 +168,7 @@ Get-Warranty/
 │   └── Invoke-WebView2Session.ps1 Reusable WebView2 browser session helper
 ├── Providers/
 │   ├── Asus.ps1                   ASUS — pure HTTP (EU RMA + CSRF)
-│   ├── Hp.ps1                     HP   — WebView2 (reCAPTCHA)
+│   ├── Hp.ps1                     HP   — HTTP API (+ WebView2 fallback)
 │   ├── Dell.ps1                   Dell — stub (planned)
 │   ├── Lenovo.ps1                 Lenovo — stub (planned)
 │   └── Acer.ps1                   Acer — stub (planned)
@@ -169,11 +184,12 @@ Each provider is a function (`Get-<Manufacturer>Warranty`) that accepts a
 `-Serial` parameter and returns a `[pscustomobject]` with a fixed schema
 (manufacturer, model, serial, warranties[], meta).
 
-* **HTTP providers** (e.g. ASUS) use `Invoke-WebRequest` with session cookies
-  and CSRF tokens.
-* **WebView2 providers** (e.g. HP) call `Invoke-WebView2Session`, which opens
-  a browser window, auto-fills the serial, lets the user solve the captcha,
-  and extracts the result via injected JavaScript.
+* **HTTP providers** (e.g. ASUS, HP with API credentials) use `Invoke-WebRequest`
+  / `Invoke-RestMethod` with session cookies, CSRF tokens, or OAuth.
+* **WebView2 providers** (e.g. HP without API credentials) call
+  `Invoke-WebView2Session`, which opens a browser window, auto-fills the
+  serial, lets the user solve the captcha, and extracts the result via
+  injected JavaScript.
 
 ### Adding a new provider
 

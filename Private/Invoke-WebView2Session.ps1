@@ -143,8 +143,15 @@ function Invoke-WebView2Session {
     }
   })
 
+  # ── initialise WebView2 with a dedicated user-data folder ──
+  $udf = Join-Path $env:LOCALAPPDATA "Get-Warranty\WebView2Data"
+  if (-not (Test-Path $udf)) { New-Item -Path $udf -ItemType Directory -Force | Out-Null }
+  $wv2Env = [Microsoft.Web.WebView2.Core.CoreWebView2Environment]::CreateAsync(
+    $null, $udf, $null
+  ).GetAwaiter().GetResult()
+
   # ── show (blocks until the form closes) ──
-  $webView.EnsureCoreWebView2Async($null) | Out-Null
+  $webView.EnsureCoreWebView2Async($wv2Env) | Out-Null
   [void] $form.ShowDialog()
 
   # ── cleanup ──
