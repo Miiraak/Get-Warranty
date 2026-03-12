@@ -126,9 +126,10 @@ function Get-HpWarranty {
     displayProductNumber = if ($device -and $device.displayProductNumber) { $device.displayProductNumber } else { "" }
   }
 
-  # HP API expects the UTC offset as "PHHMM" (e.g. "P0100" = UTC+01:00)
-  $tzOff    = [System.TimeZoneInfo]::Local.GetUtcOffset([datetime]::Now)
-  $utcOffset = "P{0:D2}{1:D2}" -f [math]::Abs($tzOff.Hours), [math]::Abs($tzOff.Minutes)
+  # HP API expects the UTC offset as "PHHMM" / "NHHMM"
+  $tzOff     = [System.TimeZoneInfo]::Local.GetUtcOffset([datetime]::Now)
+  $utcPrefix = if ($tzOff.TotalMinutes -lt 0) { "N" } else { "P" }
+  $utcOffset = "{0}{1:D2}{2:D2}" -f $utcPrefix, [math]::Abs($tzOff.Hours), [math]::Abs($tzOff.Minutes)
 
   $body = @{
     cc           = "us"
