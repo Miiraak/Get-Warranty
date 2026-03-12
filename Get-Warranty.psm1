@@ -33,7 +33,7 @@
   Get-Warranty -Manufacturer asus -Serial "ABCDEFGH1234567" -Json
 
  .EXAMPLE
-  # Check an HP serial (uses HTTP API if credentials are set, otherwise WebView2)
+  # Check an HP serial (opens WebView2 for reCAPTCHA)
   Get-Warranty -Manufacturer hp -Serial "CND1234567"
 #>
 Set-StrictMode -Version Latest

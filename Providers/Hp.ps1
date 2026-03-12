@@ -8,153 +8,10 @@ function Get-HpWarranty {
     [int] $TimeoutSeconds = 180
   )
 
-  # ── Try HP official API first (fast, no GUI) ──
-  $apiKey    = $env:GETWARRANTY_HP_APIKEY
-  $apiSecret = $env:GETWARRANTY_HP_APISECRET
+  # ── Safely encode the serial for embedding in JavaScript ──
+  $safeSerial = ($Serial | ConvertTo-Json)   # produces a JSON-quoted string
 
-  if ($apiKey -and $apiSecret) {
-    Write-Verbose "HP API credentials found – using HTTP (no GUI)."
-    return Invoke-HpWarrantyApi -Serial $Serial -ApiKey $apiKey -ApiSecret $apiSecret
-  }
-
-  # ── Fallback: WebView2 (requires reCAPTCHA) ──
-  Write-Verbose ("No HP API credentials configured. " +
-    "Set `$env:GETWARRANTY_HP_APIKEY and `$env:GETWARRANTY_HP_APISECRET to avoid WebView2.")
-  return Invoke-HpWarrantyWebView2 -Serial $Serial -TimeoutSeconds $TimeoutSeconds
-}
-
-# ──────────────────────────────────────────────
-#  HTTP path – HP CSS Warranty API (no GUI)
-# ──────────────────────────────────────────────
-function Invoke-HpWarrantyApi {
-  [CmdletBinding()]
-  param(
-    [Parameter(Mandatory)] [string] $Serial,
-    [Parameter(Mandatory)] [string] $ApiKey,
-    [Parameter(Mandatory)] [string] $ApiSecret
-  )
-
-  $iwrCommon = @{ ErrorAction = "Stop" }
-  if ($PSVersionTable.PSVersion.Major -lt 6) { $iwrCommon.UseBasicParsing = $true }
-
-  # 1 – Obtain an OAuth token
-  Write-Verbose "Requesting OAuth token from HP CSS API..."
-  $tokenUrl  = "https://css.api.hp.com/oauth/v1/token"
-  $tokenBody = "apiKey=$ApiKey&apiSecret=$ApiSecret&grantType=client_credentials&scope=warranty"
-
-  try {
-    $tokenResp = Invoke-RestMethod @iwrCommon `
-      -Method Post -Uri $tokenUrl `
-      -Body $tokenBody -ContentType "application/x-www-form-urlencoded"
-  } catch {
-    throw "HP API: failed to obtain OAuth token – check GETWARRANTY_HP_APIKEY / GETWARRANTY_HP_APISECRET. $_"
-  }
-
-  $accessToken = $tokenResp.access_token
-  if (-not $accessToken) {
-    throw "HP API: OAuth response did not contain an access_token."
-  }
-  Write-Verbose "OAuth token obtained."
-
-  # 2 – Query warranty
-  Write-Verbose "Querying HP warranty for serial $Serial..."
-  $queryUrl = "https://css.api.hp.com/productWarranty/v1/queries"
-  $headers  = @{
-    "Authorization" = "Bearer $accessToken"
-    "Accept"        = "application/json"
-    "Content-Type"  = "application/json"
-  }
-  $body = ConvertTo-Json @( @{ sn = $Serial; pn = "" } )
-
-  try {
-    $resp = Invoke-RestMethod @iwrCommon `
-      -Method Post -Uri $queryUrl -Headers $headers -Body $body
-  } catch {
-    throw "HP API: warranty query failed for serial '$Serial'. $_"
-  }
-
-  # 3 – Parse the response into the standard schema
-  $product = $null
-  $warranties = @()
-
-  # The API may return a single object or a list
-  $items = if ($resp -is [array]) { $resp } else { @($resp) }
-  foreach ($item in $items) {
-    if (-not $product -and $item.productDescription) { $product = $item.productDescription }
-
-    $entitlements = @()
-    if     ($item.warrantyList)  { $entitlements = $item.warrantyList }
-    elseif ($item.entitlements)  { $entitlements = $item.entitlements }
-
-    foreach ($w in $entitlements) {
-      $startDate = if ($w.startDate) { $w.startDate } else { $null }
-      $endDate   = if ($w.endDate)   { $w.endDate }   else { $null }
-      $wType     = if ($w.serviceType)   { $w.serviceType }
-                   elseif ($w.warrantyType) { $w.warrantyType }
-                   else { "Standard" }
-      $wStatus   = "unknown"
-      $rawStatus = @($w.serviceStatus, $w.status) | Where-Object { $_ } | Select-Object -First 1
-      if ($rawStatus) {
-        $s = $rawStatus.ToString().ToLowerInvariant()
-        if ($s -match "active|in warranty|ok") { $wStatus = "active" }
-        elseif ($s -match "expired|out of warranty") { $wStatus = "expired" }
-      }
-      if ($wStatus -eq "unknown" -and $endDate) {
-        try {
-          $parsed = [datetime]::Parse($endDate, [Globalization.CultureInfo]::InvariantCulture)
-          $wStatus = if ($parsed.Date -ge (Get-Date).Date) { "active" } else { "expired" }
-        } catch { }
-      }
-      $warranties += [pscustomobject]@{
-        name   = $wType
-        start  = $startDate
-        end    = $endDate
-        status = $wStatus
-        notes  = if ($w.serviceLevel) { "Level: $($w.serviceLevel)" } else { "" }
-      }
-    }
-  }
-
-  if ($warranties.Count -eq 0) {
-    $warranties = @(
-      [pscustomobject]@{ name = "Standard"; start = $null; end = $null; status = "unknown"; notes = "No entitlements returned by API." }
-    )
-  }
-
-  Write-Verbose "HP API returned $($warranties.Count) warranty entitlement(s)."
-
-  [pscustomobject]@{
-    manufacturer = "HP"
-    model        = $product
-    serial       = $Serial
-    product      = $null
-    checked_at   = (Get-Date).ToUniversalTime().ToString("o")
-    source       = "https://css.api.hp.com"
-    warranties   = $warranties
-    meta = [pscustomobject]@{
-      region  = $null
-      country = $null
-      url     = "https://css.api.hp.com/productWarranty/v1/queries"
-      method  = "HTTP"
-    }
-  }
-}
-
-# ──────────────────────────────────────────────
-#  WebView2 fallback – HP support site (reCAPTCHA)
-# ──────────────────────────────────────────────
-function Invoke-HpWarrantyWebView2 {
-  [CmdletBinding()]
-  param(
-    [Parameter(Mandatory)]
-    [string] $Serial,
-
-    [Parameter()]
-    [int] $TimeoutSeconds = 180
-  )
-
-  $safeSerial = ($Serial | ConvertTo-Json)
-
+  # ── JavaScript: auto-fill the serial number field ──
   $autoFillJs = @"
 (function() {
   var serialValue = $safeSerial;
@@ -177,6 +34,7 @@ function Invoke-HpWarrantyWebView2 {
       }
     }
     if (!filled) {
+      // Fallback: fill the first visible text input
       var first = document.querySelector('input[type="text"]:not([hidden])');
       if (first) {
         var ns = Object.getOwnPropertyDescriptor(
@@ -190,14 +48,19 @@ function Invoke-HpWarrantyWebView2 {
 })();
 "@
 
+  # ── JavaScript: detect and extract warranty results, then postMessage ──
   $detectJs = @"
 (function() {
   var poll = setInterval(function() {
     var body = document.body ? document.body.innerText : '';
+
+    // Heuristic: the results page contains one of these phrases
     var hasResults = /warranty\s+status|coverage\s+type|start\s+date|end\s+date|active|expired/i.test(body);
     if (!hasResults || document.readyState !== 'complete') return;
 
     var data = { warranties: [] };
+
+    // Attempt table-based extraction
     var rows = document.querySelectorAll('table tr, [role="row"]');
     rows.forEach(function(r) {
       var cells = r.querySelectorAll('td, th, [role="cell"], [role="columnheader"]');
@@ -207,6 +70,7 @@ function Invoke-HpWarrantyWebView2 {
       }
     });
 
+    // Regex-based extraction from page text
     var rx = {
       productName:  /Product\s*(?:Name|:)\s*([^\n]+)/i,
       serialNumber: /Serial\s*(?:Number|No\.?|:)\s*([^\n]+)/i,
@@ -241,6 +105,7 @@ function Invoke-HpWarrantyWebView2 {
     throw "HP warranty check returned no data for serial '$Serial'."
   }
 
+  # ── Normalise into the standard output object ──
   $model        = if ($raw.productName)  { $raw.productName }  else { $null }
   $startDate    = if ($raw.startDate)    { $raw.startDate }    else { $null }
   $endDate      = if ($raw.endDate)      { $raw.endDate }      else { $null }
@@ -249,7 +114,7 @@ function Invoke-HpWarrantyWebView2 {
   $status = "unknown"
   if ($raw.status) {
     $s = $raw.status.ToLowerInvariant()
-    if ($s -match "active|in warranty")          { $status = "active"  }
+    if ($s -match "active|in warranty")      { $status = "active"  }
     elseif ($s -match "expired|out of warranty") { $status = "expired" }
   }
   if ($status -eq "unknown" -and $endDate) {
