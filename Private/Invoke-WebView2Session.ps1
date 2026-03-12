@@ -155,7 +155,7 @@ function Invoke-WebView2Session {
     try {
       $json = $state.Result
       # ExecuteScriptAsync / postMessage may double-encode the JSON string
-      if ($json -is [string] -and $json.StartsWith('"') -and $json.EndsWith('"')) {
+      if ($json -and $json -is [string] -and $json.StartsWith('"') -and $json.EndsWith('"')) {
         $json = $json | ConvertFrom-Json
       }
       return ($json | ConvertFrom-Json)

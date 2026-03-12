@@ -115,7 +115,7 @@ function Get-HpWarranty {
   }
   if ($status -eq "unknown" -and $endDate) {
     try {
-      $parsed = [datetime]::Parse($endDate)
+      $parsed = [datetime]::Parse($endDate, [Globalization.CultureInfo]::InvariantCulture)
       $status = if ($parsed.Date -ge (Get-Date).Date) { "active" } else { "expired" }
     } catch { }
   }

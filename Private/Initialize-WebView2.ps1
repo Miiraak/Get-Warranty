@@ -60,6 +60,8 @@ function Install-WebView2Sdk {
   [CmdletBinding()]
   param(
     [Parameter()]
+    # Pin a known-good version.  Bump this when a newer SDK is verified.
+    # See https://www.nuget.org/packages/Microsoft.Web.WebView2 for releases.
     [string] $PackageVersion = "1.0.2903.40"
   )
 
