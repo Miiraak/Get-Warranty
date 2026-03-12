@@ -34,7 +34,16 @@ Minimalist PowerShell module to check the warranty status of a device from the c
 | **OS** | Windows 10 / 11 (WMI is used for local-device detection) |
 | **WebView2 Runtime** | Required only for providers that use the WebView2 strategy (HP, and future providers). Windows 11 includes it by default. On Windows 10 it is installed alongside Microsoft Edge, or can be installed separately from [Microsoft](https://developer.microsoft.com/en-us/microsoft-edge/webview2/). |
 
-The WebView2 .NET SDK is **downloaded automatically** on first use (cached in `Lib/WebView2/` inside the module folder). No manual NuGet step is needed.
+The WebView2 .NET SDK is **downloaded automatically** on first use and cached
+under `%LOCALAPPDATA%\Get-Warranty\WebView2`. No manual NuGet step is needed.
+The downloaded package is verified against a pinned SHA-256 hash.
+
+To use a pre-provisioned / offline SDK path, set the environment variable
+`GETWARRANTY_WV2_SDK` to the folder containing the WebView2 DLLs.
+
+> **Note:** WebView2 providers require a **Single Threaded Apartment (STA)**
+> thread. Windows PowerShell 5.1 runs STA by default. For PowerShell 7+,
+> launch with `pwsh -STA` or host the call in an STA runspace.
 
 ---
 
@@ -148,8 +157,8 @@ Get-Warranty/
 │   ├── Dell.ps1                   Dell — stub (planned)
 │   ├── Lenovo.ps1                 Lenovo — stub (planned)
 │   └── Acer.ps1                   Acer — stub (planned)
-├── Lib/                           (auto-created, .gitignore'd)
-│   └── WebView2/                  Downloaded NuGet SDK assemblies
+├── Lib/                           (no longer used for SDK cache)
+│   └── WebView2/                  (moved to %LOCALAPPDATA%\Get-Warranty\WebView2)
 ├── LICENSE                        MIT
 └── README.md
 ```

@@ -9,9 +9,14 @@
       Test-WebView2Runtime   – Checks the Windows registry / filesystem for the
                                Evergreen WebView2 Runtime.
       Install-WebView2Sdk    – Downloads the Microsoft.Web.WebView2 NuGet package
-                               and extracts the managed + native DLLs into Lib/WebView2.
+                               and extracts the managed + native DLLs into a
+                               user-writable cache directory.
       Initialize-WebView2    – Orchestrates the above and loads the assemblies into
                                the current PowerShell session.
+
+    The SDK cache is stored under $env:LOCALAPPDATA\Get-Warranty\WebView2 by
+    default.  Set $env:GETWARRANTY_WV2_SDK to override with a custom path
+    (e.g. for pre-provisioned / offline installs).
 #>
 
 function Test-WebView2Runtime {
@@ -65,8 +70,19 @@ function Install-WebView2Sdk {
     [string] $PackageVersion = "1.0.2903.40"
   )
 
-  $libDir = Join-Path $script:ModuleRoot "Lib"
-  $wv2Dir = Join-Path $libDir "WebView2"
+  # Expected SHA-256 hash of the pinned NuGet package (lowercase hex).
+  # Update this whenever $PackageVersion is bumped.
+  $expectedHash = "65B2580B92900A07B06AE68E5A7E03E8CE498E09E155F5F38B5F09E9F8AF8E37"
+
+  # ── Resolve cache directory ──
+  # Priority: $env:GETWARRANTY_WV2_SDK > $env:LOCALAPPDATA\Get-Warranty\WebView2
+  if ($env:GETWARRANTY_WV2_SDK -and (Test-Path $env:GETWARRANTY_WV2_SDK)) {
+    $wv2Dir = $env:GETWARRANTY_WV2_SDK
+    Write-Verbose "Using administrator-provisioned SDK path: $wv2Dir"
+  } else {
+    $cacheRoot = Join-Path $env:LOCALAPPDATA "Get-Warranty"
+    $wv2Dir    = Join-Path $cacheRoot "WebView2"
+  }
 
   # Already present?
   if (Test-Path (Join-Path $wv2Dir "Microsoft.Web.WebView2.Core.dll")) {
@@ -75,8 +91,12 @@ function Install-WebView2Sdk {
   }
 
   Write-Verbose "Downloading Microsoft.Web.WebView2 $PackageVersion from NuGet..."
-  if (-not (Test-Path $wv2Dir)) {
-    New-Item -Path $wv2Dir -ItemType Directory -Force | Out-Null
+  try {
+    if (-not (Test-Path $wv2Dir)) {
+      New-Item -Path $wv2Dir -ItemType Directory -Force | Out-Null
+    }
+  } catch {
+    throw "Cannot create SDK cache directory '$wv2Dir'. Check folder permissions or set `$env:GETWARRANTY_WV2_SDK to a writable path."
   }
 
   $nugetUrl  = "https://www.nuget.org/api/v2/package/Microsoft.Web.WebView2/$PackageVersion"
@@ -88,6 +108,16 @@ function Install-WebView2Sdk {
     $iwrParams = @{ Uri = $nugetUrl; OutFile = $tempFile; ErrorAction = "Stop" }
     if ($PSVersionTable.PSVersion.Major -lt 6) { $iwrParams.UseBasicParsing = $true }
     Invoke-WebRequest @iwrParams
+
+    # Verify integrity (SHA-256)
+    $actualHash = (Get-FileHash -Path $tempFile -Algorithm SHA256).Hash
+    if ($actualHash -ne $expectedHash) {
+      throw ("Package integrity check failed.`n" +
+             "  Expected SHA-256: $expectedHash`n" +
+             "  Actual SHA-256:   $actualHash`n" +
+             "The downloaded file may be corrupted or tampered with.")
+    }
+    Write-Verbose "Package SHA-256 verified: $actualHash"
 
     # Extract
     if (Test-Path $tempDir) { Remove-Item $tempDir -Recurse -Force }
@@ -117,7 +147,7 @@ function Install-WebView2Sdk {
     Write-Verbose "WebView2 SDK installed to $wv2Dir"
     return $wv2Dir
   } catch {
-    throw "Failed to download WebView2 SDK: $_`nEnsure you have internet access or manually place the DLLs in $wv2Dir."
+    throw "Failed to install WebView2 SDK: $_`nEnsure you have internet access or pre-provision the DLLs via `$env:GETWARRANTY_WV2_SDK."
   } finally {
     Remove-Item $tempFile  -Force -ErrorAction SilentlyContinue
     Remove-Item $tempDir   -Recurse -Force -ErrorAction SilentlyContinue

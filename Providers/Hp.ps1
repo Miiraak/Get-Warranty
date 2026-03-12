@@ -8,9 +8,13 @@ function Get-HpWarranty {
     [int] $TimeoutSeconds = 180
   )
 
+  # ── Safely encode the serial for embedding in JavaScript ──
+  $safeSerial = ($Serial | ConvertTo-Json)   # produces a JSON-quoted string
+
   # ── JavaScript: auto-fill the serial number field ──
   $autoFillJs = @"
 (function() {
+  var serialValue = $safeSerial;
   setTimeout(function() {
     var filled = false;
     var inputs = document.querySelectorAll('input[type="text"], input[type="search"], input');
@@ -22,7 +26,7 @@ function Get-HpWarranty {
       if (id.indexOf('serial') !== -1 || nm.indexOf('serial') !== -1 || ph.indexOf('serial') !== -1) {
         var nativeSetter = Object.getOwnPropertyDescriptor(
           window.HTMLInputElement.prototype, 'value').set;
-        nativeSetter.call(el, '$Serial');
+        nativeSetter.call(el, serialValue);
         el.dispatchEvent(new Event('input',  { bubbles: true }));
         el.dispatchEvent(new Event('change', { bubbles: true }));
         filled = true;
@@ -35,7 +39,7 @@ function Get-HpWarranty {
       if (first) {
         var ns = Object.getOwnPropertyDescriptor(
           window.HTMLInputElement.prototype, 'value').set;
-        ns.call(first, '$Serial');
+        ns.call(first, serialValue);
         first.dispatchEvent(new Event('input',  { bubbles: true }));
         first.dispatchEvent(new Event('change', { bubbles: true }));
       }

@@ -33,14 +33,20 @@ function Invoke-WebView2Session {
     [Parameter()]
     [string] $ResultDetectionScript,
 
-    # Seconds before the window is closed automatically
+    # Seconds before the window is closed automatically (1–600)
     [Parameter()]
+    [ValidateRange(1, 600)]
     [int] $TimeoutSeconds = 180,
 
     # Title shown in the window title-bar
     [Parameter()]
     [string] $Title = "Get-Warranty"
   )
+
+  # WebView2 / WinForms require a Single Threaded Apartment (STA) thread
+  if ([System.Threading.Thread]::CurrentThread.GetApartmentState() -ne 'STA') {
+    throw "Invoke-WebView2Session must run in a Single Threaded Apartment (STA). Start PowerShell with '-STA' (where supported) or create an STA runspace/thread to host this dialog."
+  }
 
   # Ensure WebView2 Runtime + SDK are ready
   Initialize-WebView2
@@ -160,8 +166,7 @@ function Invoke-WebView2Session {
       }
       return ($json | ConvertFrom-Json)
     } catch {
-      Write-Warning "Could not parse WebView2 result as JSON. Returning raw value."
-      return $state.Result
+      throw "Could not parse WebView2 result as JSON. Raw value: $($state.Result)"
     }
   }
 
