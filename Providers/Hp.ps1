@@ -1,150 +1,214 @@
+# ── Module-scoped token cache (reused across calls within the same session) ──
+$script:HpCaptchaToken     = $null
+$script:HpCaptchaTokenTime = [datetime]::MinValue
+
+function Get-HpReCaptchaToken {
+  <#
+    .SYNOPSIS
+      Obtains a Google reCAPTCHA v3 token for support.hp.com using a headless
+      Chromium-based browser (Microsoft Edge or Google Chrome).
+
+    .DESCRIPTION
+      Launches Edge/Chrome in headless mode with --dump-dom to load the HP
+      warranty page, then extracts the token that Google reCAPTCHA v3 writes
+      into the hidden textarea "g-recaptcha-response".
+
+      The token is cached at module scope for ~90 seconds to avoid re-launching
+      the browser on every call (reCAPTCHA v3 tokens are valid for ~120 s).
+  #>
+  [CmdletBinding()]
+  [OutputType([string])]
+  param()
+
+  # Return cached token if still valid
+  if ($script:HpCaptchaToken -and
+      ((Get-Date) - $script:HpCaptchaTokenTime).TotalSeconds -lt 90) {
+    Write-Verbose "Reusing cached HP reCAPTCHA token."
+    return $script:HpCaptchaToken
+  }
+
+  $browser = Get-ChromiumPath
+  Write-Verbose "Launching headless browser to obtain reCAPTCHA token: $browser"
+
+  # Regex pattern for the hidden reCAPTCHA v3 response textarea
+  $tokenRegex = 'name="g-recaptcha-response"[^>]*>\s*([^<\s][^<]*?)\s*<'
+
+  $browserOutput = & $browser --headless --disable-gpu --dump-dom `
+    "https://support.hp.com/us-en/check-warranty" 2>&1
+  $dom   = ($browserOutput | Where-Object { $_ -isnot [System.Management.Automation.ErrorRecord] }) -join "`n"
+  $token = [regex]::Match($dom, $tokenRegex).Groups[1].Value
+
+  if ([string]::IsNullOrWhiteSpace($token)) {
+    # reCAPTCHA async call may not have completed; wait and retry once
+    Write-Verbose "Token not found on first attempt; waiting 3 s and retrying..."
+    Start-Sleep -Seconds 3
+    $browserOutput = & $browser --headless --disable-gpu --dump-dom `
+      "https://support.hp.com/us-en/check-warranty" 2>&1
+    $dom   = ($browserOutput | Where-Object { $_ -isnot [System.Management.Automation.ErrorRecord] }) -join "`n"
+    $token = [regex]::Match($dom, $tokenRegex).Groups[1].Value
+  }
+
+  if ([string]::IsNullOrWhiteSpace($token)) {
+    throw "Failed to extract reCAPTCHA token from HP warranty page. " +
+          "Ensure Microsoft Edge or Google Chrome is installed and can reach support.hp.com."
+  }
+
+  $script:HpCaptchaToken     = $token
+  $script:HpCaptchaTokenTime = Get-Date
+  Write-Verbose "reCAPTCHA token obtained and cached (~90 s TTL)."
+  return $token
+}
+
+function Get-HPProductInfo {
+  <#
+    .SYNOPSIS
+      Queries the HP device search API to retrieve product details for a serial number.
+  #>
+  [CmdletBinding()]
+  [OutputType([object])]
+  param(
+    [Parameter(Mandatory)]
+    [string] $SerialNumber
+  )
+
+  $uri  = "https://support.hp.com/wcc-services/profile/devices/searchresult"
+  $body = @{
+    serialNumber = $SerialNumber
+    countryCode  = "us"
+    languageCode = "en"
+  } | ConvertTo-Json
+
+  $iwrParams = @{
+    Uri         = $uri
+    Method      = "POST"
+    ContentType = "application/json"
+    Body        = $body
+    ErrorAction = "Stop"
+  }
+  if ($PSVersionTable.PSVersion.Major -lt 6) { $iwrParams.UseBasicParsing = $true }
+
+  try {
+    $result = Invoke-RestMethod @iwrParams
+    if ($result.devices -and $result.devices.Count -gt 0) {
+      return $result.devices[0]
+    }
+  } catch {
+    Write-Verbose "HP product info lookup failed: $_"
+  }
+
+  return $null
+}
+
 function Get-HpWarranty {
   [CmdletBinding()]
   param(
     [Parameter(Mandatory)]
     [string] $Serial,
 
+    # Kept for backward compatibility; not used in the headless flow
     [Parameter()]
-    [int] $TimeoutSeconds = 180
+    [int] $TimeoutSeconds = 60
   )
 
-  # ── Safely encode the serial for embedding in JavaScript ──
-  $safeSerial = ($Serial | ConvertTo-Json)   # produces a JSON-quoted string
+  Write-Verbose "Fetching HP product info for serial: $Serial"
+  $device = Get-HPProductInfo -SerialNumber $Serial
 
-  # ── JavaScript: auto-fill the serial number field ──
-  $autoFillJs = @"
-(function() {
-  var serialValue = $safeSerial;
-  setTimeout(function() {
-    var filled = false;
-    var inputs = document.querySelectorAll('input[type="text"], input[type="search"], input');
-    for (var i = 0; i < inputs.length; i++) {
-      var el  = inputs[i];
-      var id  = (el.id || '').toLowerCase();
-      var nm  = (el.name || '').toLowerCase();
-      var ph  = (el.placeholder || '').toLowerCase();
-      if (id.indexOf('serial') !== -1 || nm.indexOf('serial') !== -1 || ph.indexOf('serial') !== -1) {
-        var nativeSetter = Object.getOwnPropertyDescriptor(
-          window.HTMLInputElement.prototype, 'value').set;
-        nativeSetter.call(el, serialValue);
-        el.dispatchEvent(new Event('input',  { bubbles: true }));
-        el.dispatchEvent(new Event('change', { bubbles: true }));
-        filled = true;
-        break;
-      }
-    }
-    if (!filled) {
-      // Fallback: fill the first visible text input
-      var first = document.querySelector('input[type="text"]:not([hidden])');
-      if (first) {
-        var ns = Object.getOwnPropertyDescriptor(
-          window.HTMLInputElement.prototype, 'value').set;
-        ns.call(first, serialValue);
-        first.dispatchEvent(new Event('input',  { bubbles: true }));
-        first.dispatchEvent(new Event('change', { bubbles: true }));
-      }
-    }
-  }, 1500);
-})();
-"@
+  Write-Verbose "Obtaining reCAPTCHA token via headless browser..."
+  $token = Get-HpReCaptchaToken
 
-  # ── JavaScript: detect and extract warranty results, then postMessage ──
-  $detectJs = @"
-(function() {
-  var poll = setInterval(function() {
-    var body = document.body ? document.body.innerText : '';
+  $uri = "https://support.hp.com/wcc-services/profile/devices/warranty/specs" +
+         "?authState=anonymous&template=WarrantyLanding"
 
-    // Heuristic: the results page contains one of these phrases
-    var hasResults = /warranty\s+status|coverage\s+type|start\s+date|end\s+date|active|expired/i.test(body);
-    if (!hasResults || document.readyState !== 'complete') return;
-
-    var data = { warranties: [] };
-
-    // Attempt table-based extraction
-    var rows = document.querySelectorAll('table tr, [role="row"]');
-    rows.forEach(function(r) {
-      var cells = r.querySelectorAll('td, th, [role="cell"], [role="columnheader"]');
-      if (cells.length >= 2) {
-        data.warranties.push({ label: cells[0].innerText.trim(),
-                               value: cells[1].innerText.trim() });
-      }
-    });
-
-    // Regex-based extraction from page text
-    var rx = {
-      productName:  /Product\s*(?:Name|:)\s*([^\n]+)/i,
-      serialNumber: /Serial\s*(?:Number|No\.?|:)\s*([^\n]+)/i,
-      warrantyType: /(?:Warranty|Coverage)\s*(?:Type|:)\s*([^\n]+)/i,
-      startDate:    /Start\s*(?:Date|:)\s*([^\n]+)/i,
-      endDate:      /End\s*(?:Date|:)\s*([^\n]+)/i,
-      status:       /(?:Warranty\s+)?Status\s*:?\s*(Active|Expired|In Warranty|Out of Warranty)[^\n]*/i
-    };
-    for (var k in rx) {
-      var m = body.match(rx[k]);
-      if (m) data[k] = m[1].trim();
-    }
-
-    if (data.warranties.length > 0 || data.productName || data.startDate || data.endDate || data.status) {
-      clearInterval(poll);
-      window.chrome.webview.postMessage(JSON.stringify(data));
-    }
-  }, 2000);
-})();
-"@
-
-  Write-Verbose "Opening WebView2 session for HP warranty check (serial: $Serial)..."
-
-  $raw = Invoke-WebView2Session `
-    -Url                   "https://support.hp.com/us-en/check-warranty" `
-    -AutoFillScript        $autoFillJs `
-    -ResultDetectionScript $detectJs `
-    -TimeoutSeconds        $TimeoutSeconds `
-    -Title                 "Get-Warranty - HP Warranty Check"
-
-  if (-not $raw) {
-    throw "HP warranty check returned no data for serial '$Serial'."
+  $deviceEntry = @{
+    serialNumber         = $Serial
+    countryOfPurchase    = if ($device -and $device.countryOfPurchase) { $device.countryOfPurchase } else { "us" }
+    productNumber        = if ($device -and $device.productNumber)     { $device.productNumber }     else { "" }
+    displayProductNumber = if ($device -and $device.displayProductNumber) { $device.displayProductNumber } else { "" }
   }
+
+  # HP API expects the UTC offset as "PHHMM" / "NHHMM"
+  $tzOff     = [System.TimeZoneInfo]::Local.GetUtcOffset([datetime]::Now)
+  $utcPrefix = if ($tzOff.TotalMinutes -lt 0) { "N" } else { "P" }
+  $utcOffset = "{0}{1:D2}{2:D2}" -f $utcPrefix, [math]::Abs($tzOff.Hours), [math]::Abs($tzOff.Minutes)
+
+  $body = @{
+    cc           = "us"
+    lc           = "en"
+    utcOffset    = $utcOffset
+    devices      = @($deviceEntry)
+    captchaToken = $token
+  } | ConvertTo-Json -Depth 5
+
+  $iwrParams = @{
+    Uri         = $uri
+    Method      = "POST"
+    ContentType = "application/json"
+    Body        = $body
+    ErrorAction = "Stop"
+  }
+  if ($PSVersionTable.PSVersion.Major -lt 6) { $iwrParams.UseBasicParsing = $true }
+
+  Write-Verbose "Calling HP warranty API..."
+  $result = Invoke-RestMethod @iwrParams
 
   # ── Normalise into the standard output object ──
-  $model        = if ($raw.productName)  { $raw.productName }  else { $null }
-  $startDate    = if ($raw.startDate)    { $raw.startDate }    else { $null }
-  $endDate      = if ($raw.endDate)      { $raw.endDate }      else { $null }
-  $warrantyType = if ($raw.warrantyType) { $raw.warrantyType } else { "Standard" }
+  $deviceResult = if ($result.devices -and $result.devices.Count -gt 0) { $result.devices[0] } else { $null }
 
-  $status = "unknown"
-  if ($raw.status) {
-    $s = $raw.status.ToLowerInvariant()
-    if ($s -match "active|in warranty")      { $status = "active"  }
-    elseif ($s -match "expired|out of warranty") { $status = "expired" }
+  $modelName = if ($deviceResult -and $deviceResult.productName)  { $deviceResult.productName }
+               elseif ($device -and $device.productName)          { $device.productName }
+               else                                               { $null }
+
+  $productNum = if ($deviceResult -and $deviceResult.productNumber) { $deviceResult.productNumber }
+                elseif ($device -and $device.productNumber)         { $device.productNumber }
+                else                                                { $null }
+
+  $warrantyList = @()
+  if ($deviceResult -and $deviceResult.warranties) {
+    foreach ($w in $deviceResult.warranties) {
+      $start  = $w.startDate
+      $end    = $w.endDate
+      $status = "unknown"
+      if ($end) {
+        try {
+          $parsed = [datetime]::Parse($end, [Globalization.CultureInfo]::InvariantCulture)
+          $status = if ($parsed.Date -ge (Get-Date).Date) { "active" } else { "expired" }
+        } catch { }
+      }
+      $warrantyList += [pscustomobject]@{
+        name   = if ($w.type) { $w.type } else { "Standard" }
+        start  = $start
+        end    = $end
+        status = $status
+        notes  = ""
+      }
+    }
   }
-  if ($status -eq "unknown" -and $endDate) {
-    try {
-      $parsed = [datetime]::Parse($endDate, [Globalization.CultureInfo]::InvariantCulture)
-      $status = if ($parsed.Date -ge (Get-Date).Date) { "active" } else { "expired" }
-    } catch { }
+
+  if ($warrantyList.Count -eq 0) {
+    $warrantyList += [pscustomobject]@{
+      name   = "Standard"
+      start  = $null
+      end    = $null
+      status = "unknown"
+      notes  = ""
+    }
   }
 
   [pscustomobject]@{
     manufacturer = "HP"
-    model        = $model
+    model        = $modelName
     serial       = $Serial
-    product      = $null
+    product      = $productNum
     checked_at   = (Get-Date).ToUniversalTime().ToString("o")
     source       = "https://support.hp.com"
-    warranties   = @(
-      [pscustomobject]@{
-        name   = $warrantyType
-        start  = $startDate
-        end    = $endDate
-        status = $status
-        notes  = ""
-      }
-    )
-    meta = [pscustomobject]@{
+    warranties   = $warrantyList
+    meta         = [pscustomobject]@{
       region  = "us-en"
-      country = $null
-      url     = "https://support.hp.com/us-en/check-warranty"
-      method  = "WebView2"
+      country = if ($deviceResult -and $deviceResult.countryOfPurchase) { $deviceResult.countryOfPurchase }
+                elseif ($device -and $device.countryOfPurchase)         { $device.countryOfPurchase }
+                else                                                     { "us" }
+      url     = "https://support.hp.com/wcc-services/profile/devices/warranty/specs"
+      method  = "ChromiumHeadless"
     }
   }
 }

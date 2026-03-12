@@ -9,9 +9,9 @@
   structured JSON or a formatted ASCII table.
 
   Providers use pure HTTP when the manufacturer's site allows it (e.g. ASUS EU
-  RMA).  When the site requires reCAPTCHA or heavy JavaScript, the provider
-  opens a WebView2 browser window so the user can solve the captcha while the
-  module handles form-filling and data extraction automatically.
+  RMA).  When the site requires reCAPTCHA, the HP provider obtains the token
+  via a headless Edge/Chrome session and calls the HP backend API directly.
+  Providers that need full browser interaction can use the WebView2 helper.
 
  .PARAMETER Serial
   The serial number of the device to check.  If omitted the local machine's

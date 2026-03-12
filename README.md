@@ -8,7 +8,8 @@ Minimalist PowerShell module to check the warranty status of a device from the c
   2. **JSON** (`-Json` switch) – structured output for integration into scripts and tools.
 - **Two retrieval strategies:**
   - **Pure HTTP** – fast, no UI; used when the manufacturer's site allows direct form submission (e.g. ASUS EU RMA).
-  - **WebView2 browser** – used when the site requires reCAPTCHA or heavy JavaScript. A browser window opens; the user solves the captcha while the module handles form-filling and data extraction automatically.
+  - **Chromium Headless** – used when the site requires reCAPTCHA. The module launches Edge or Chrome in invisible headless mode to obtain the reCAPTCHA token, then calls the manufacturer's backend API directly. No browser window, no user interaction.
+  - **WebView2 browser** – available for future providers that require interactive captcha solving.
 
 ---
 
@@ -17,7 +18,7 @@ Minimalist PowerShell module to check the warranty status of a device from the c
 | Manufacturer | Method | Status |
 |:--|:--|:--|
 | ASUS | HTTP – EU RMA Portal (HTML + CSRF token) | ✅ OK |
-| HP | WebView2 – support.hp.com (reCAPTCHA) | ✅ OK |
+| HP | Chromium Headless – support.hp.com (reCAPTCHA token via headless Edge/Chrome + direct API) | ✅ OK |
 | Dell | WebView2 (planned) | ⏳ TODO |
 | Lenovo | WebView2 (planned) | ⏳ TODO |
 | Acer | WebView2 (planned) | ⏳ TODO |
@@ -32,7 +33,8 @@ Minimalist PowerShell module to check the warranty status of a device from the c
 |:--|:--|
 | **PowerShell** | 5.1 (Windows PowerShell) or 7+ (PowerShell Core on Windows) |
 | **OS** | Windows 10 / 11 (WMI is used for local-device detection) |
-| **WebView2 Runtime** | Required only for providers that use the WebView2 strategy (HP, and future providers). Windows 11 includes it by default. On Windows 10 it is installed alongside Microsoft Edge, or can be installed separately from [Microsoft](https://developer.microsoft.com/en-us/microsoft-edge/webview2/). |
+| **Edge or Chrome** | Required for the HP provider (and any future Chromium Headless provider). Microsoft Edge ships with Windows 10/11; Google Chrome is an alternative. |
+| **WebView2 Runtime** | Required only for future providers that use the interactive WebView2 strategy. Windows 11 includes it by default; on Windows 10 it is installed alongside Microsoft Edge, or can be installed separately from [Microsoft](https://developer.microsoft.com/en-us/microsoft-edge/webview2/). |
 
 The WebView2 .NET SDK is **downloaded automatically** on first use and cached
 under `%LOCALAPPDATA%\Get-Warranty\WebView2`. No manual NuGet step is needed.
@@ -88,16 +90,16 @@ Get-Warranty -Manufacturer asus -Serial "ABCDEFGH1234567"
 Get-Warranty -Manufacturer asus -Serial "ABCDEFGH1234567" -Json
 ```
 
-#### 4) HP warranty check (opens a WebView2 window)
+#### 4) HP warranty check (headless, no UI)
 
 ```powershell
 Get-Warranty -Manufacturer hp -Serial "CND1234567"
 ```
 
-A browser window will open on the HP support page.  The serial number is
-auto-filled.  Solve the reCAPTCHA if prompted, then click **Submit**.  The
-window closes automatically once the warranty results are detected and
-extracted.
+Edge or Chrome is launched invisibly in headless mode to obtain a reCAPTCHA
+token.  The token is then used to call the HP warranty backend API directly.
+No browser window appears and no user interaction is required.  Subsequent
+calls within ~90 seconds reuse the cached token, making them near-instant.
 
 #### 5) Verbose logging (useful for debugging)
 
@@ -137,7 +139,7 @@ Example (indicative format):
 }
 ```
 
-> The `meta.method` field indicates the retrieval strategy used (`HTTP` or `WebView2`).
+> The `meta.method` field indicates the retrieval strategy used (`HTTP`, `ChromiumHeadless`, or `WebView2`).
 
 ---
 
@@ -149,16 +151,15 @@ Get-Warranty/
 ├── Get-Warranty.psm1              Main module (Get-Warranty, Get-LocalDeviceIdentity)
 ├── Private/
 │   ├── Format-WarrantyTable.ps1   ASCII table formatter
+│   ├── Get-ChromiumPath.ps1       Chromium browser detection (Edge / Chrome)
 │   ├── Initialize-WebView2.ps1    WebView2 Runtime detection & SDK setup
 │   └── Invoke-WebView2Session.ps1 Reusable WebView2 browser session helper
 ├── Providers/
-│   ├── Asus.ps1                   ASUS — pure HTTP (EU RMA + CSRF)
-│   ├── Hp.ps1                     HP   — WebView2 (reCAPTCHA)
-│   ├── Dell.ps1                   Dell — stub (planned)
+│   ├── Asus.ps1                   ASUS   — pure HTTP (EU RMA + CSRF)
+│   ├── Hp.ps1                     HP     — Chromium Headless (reCAPTCHA token + direct API)
+│   ├── Dell.ps1                   Dell   — stub (planned)
 │   ├── Lenovo.ps1                 Lenovo — stub (planned)
-│   └── Acer.ps1                   Acer — stub (planned)
-├── Lib/                           (no longer used for SDK cache)
-│   └── WebView2/                  (moved to %LOCALAPPDATA%\Get-Warranty\WebView2)
+│   └── Acer.ps1                   Acer   — stub (planned)
 ├── LICENSE                        MIT
 └── README.md
 ```
@@ -171,7 +172,11 @@ Each provider is a function (`Get-<Manufacturer>Warranty`) that accepts a
 
 * **HTTP providers** (e.g. ASUS) use `Invoke-WebRequest` with session cookies
   and CSRF tokens.
-* **WebView2 providers** (e.g. HP) call `Invoke-WebView2Session`, which opens
+* **Chromium Headless providers** (e.g. HP) use `Get-ChromiumPath` to locate
+  Edge or Chrome, launch it with `--headless --dump-dom` to harvest a
+  reCAPTCHA v3 token, then call the manufacturer's backend API directly.
+  No GUI window, no user interaction, no extra dependencies.
+* **WebView2 providers** (future) call `Invoke-WebView2Session`, which opens
   a browser window, auto-fills the serial, lets the user solve the captcha,
   and extracts the result via injected JavaScript.
 
@@ -180,8 +185,10 @@ Each provider is a function (`Get-<Manufacturer>Warranty`) that accepts a
 1. Create `Providers/<Manufacturer>.ps1` with a `Get-<Manufacturer>Warranty`
    function that returns the standard schema.
 2. Add a `switch` branch in `Get-Warranty.psm1`.
-3. If the site uses reCAPTCHA, use `Invoke-WebView2Session` (see `Hp.ps1` as
-   an example).
+3. For reCAPTCHA sites with a known backend API, use `Get-ChromiumPath` and
+   `--dump-dom` to get the token (see `Hp.ps1`).
+4. For sites without a direct API, use `Invoke-WebView2Session` for interactive
+   captcha solving.
 
 ---
 
