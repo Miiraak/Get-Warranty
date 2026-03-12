@@ -93,8 +93,9 @@ function Invoke-HpWarrantyApi {
                    elseif ($w.warrantyType) { $w.warrantyType }
                    else { "Standard" }
       $wStatus   = "unknown"
-      if ($w.serviceStatus -or $w.status) {
-        $s = ($w.serviceStatus, $w.status | Where-Object { $_ } | Select-Object -First 1).ToString().ToLowerInvariant()
+      $rawStatus = @($w.serviceStatus, $w.status) | Where-Object { $_ } | Select-Object -First 1
+      if ($rawStatus) {
+        $s = $rawStatus.ToString().ToLowerInvariant()
         if ($s -match "active|in warranty|ok") { $wStatus = "active" }
         elseif ($s -match "expired|out of warranty") { $wStatus = "expired" }
       }
