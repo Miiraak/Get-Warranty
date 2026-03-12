@@ -70,7 +70,9 @@ function Install-WebView2Sdk {
     [string] $PackageVersion = "1.0.2903.40"
   )
 
-  # Expected SHA-256 hash of the pinned NuGet package (lowercase hex).
+  # Expected SHA-256 hash of the pinned NuGet package.
+  # Corresponds to Microsoft.Web.WebView2 v1.0.2903.40 from
+  # https://www.nuget.org/packages/Microsoft.Web.WebView2/1.0.2903.40
   # Update this whenever $PackageVersion is bumped.
   $expectedHash = "65B2580B92900A07B06AE68E5A7E03E8CE498E09E155F5F38B5F09E9F8AF8E37"
 

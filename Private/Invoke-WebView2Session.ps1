@@ -166,7 +166,7 @@ function Invoke-WebView2Session {
       }
       return ($json | ConvertFrom-Json)
     } catch {
-      throw "Could not parse WebView2 result as JSON. Raw value: $($state.Result)"
+      throw "Could not parse WebView2 result as JSON. Raw value (truncated): $($state.Result.Substring(0, [Math]::Min($state.Result.Length, 200)))"
     }
   }
 
