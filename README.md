@@ -1,45 +1,74 @@
 # Get-Warranty (PowerShell)
 
-Minimalist PowerShell module to verify the warranty of a machine from a CLI.
+Minimalist PowerShell module to check the warranty status of a device from the command line.
 
-- Main control: **`Get-Warranty`**
-- Use case:
-  1) Without arguments   : detects the constructor + serial number and displays an ASCII table with warranty infos.
-  2) Option `-Json`   : JSON structured output (for integration into other tools)
+- **Main command:** `Get-Warranty`
+- **Two output modes:**
+  1. **ASCII table** (default) – human-friendly summary.
+  2. **JSON** (`-Json` switch) – structured output for integration into scripts and tools.
+- **Two retrieval strategies:**
+  - **Pure HTTP** – fast, no UI; used when the manufacturer's site allows direct form submission (e.g. ASUS EU RMA).
+  - **WebView2 browser** – used when the site requires reCAPTCHA or heavy JavaScript. A browser window opens; the user solves the captcha while the module handles form-filling and data extraction automatically.
 
-## Manufacturer support (current state)
+---
+
+## Manufacturer support
 
 | Manufacturer | Method | Status |
 |:--|:--|:--|
-| ASUS | EU RMA Portal (HTML + CSRF) | OK |
-| HP | To be implemented | In Work |
-| Dell | To be implemented | TODO |
-| Lenovo | To be implemented | TODO |
-| Acer | To be implemented | TODO |
+| ASUS | HTTP – EU RMA Portal (HTML + CSRF token) | ✅ OK |
+| HP | WebView2 – support.hp.com (reCAPTCHA) | ✅ OK |
+| Dell | WebView2 (planned) | ⏳ TODO |
+| Lenovo | WebView2 (planned) | ⏳ TODO |
+| Acer | WebView2 (planned) | ⏳ TODO |
 
-> Note: ASUS is implemented via `https://eu-rma.asus.com/...` (not `www.asus.com`) in order to avoid reCAPTCHA blocking.
+> **Note:** ASUS uses the EU RMA portal (`eu-rma.asus.com`) instead of `www.asus.com` to avoid reCAPTCHA blocking.
+
+---
+
+## Prerequisites
+
+| Requirement | Details |
+|:--|:--|
+| **PowerShell** | 5.1 (Windows PowerShell) or 7+ (PowerShell Core on Windows) |
+| **OS** | Windows 10 / 11 (WMI is used for local-device detection) |
+| **WebView2 Runtime** | Required only for providers that use the WebView2 strategy (HP, and future providers). Windows 11 includes it by default. On Windows 10 it is installed alongside Microsoft Edge, or can be installed separately from [Microsoft](https://developer.microsoft.com/en-us/microsoft-edge/webview2/). |
+
+The WebView2 .NET SDK is **downloaded automatically** on first use and cached
+under `%LOCALAPPDATA%\Get-Warranty\WebView2`. No manual NuGet step is needed.
+The downloaded package is verified against a pinned SHA-256 hash.
+
+To use a pre-provisioned / offline SDK path, set the environment variable
+`GETWARRANTY_WV2_SDK` to the folder containing the WebView2 DLLs.
+
+> **Note:** WebView2 providers require a **Single Threaded Apartment (STA)**
+> thread. Windows PowerShell 5.1 runs STA by default. For PowerShell 7+,
+> launch with `pwsh -STA` or host the call in an STA runspace.
 
 ---
 
 ## Installation
 
 #### From PowerShell Gallery
+
 ```powershell
 Install-Module -Name Get-Warranty
 ```
 
-#### Manual 
-1. Place the `Get-Warranty/` folder somewhere (ex: `C:\Tools\Get-Warranty`)
+#### Manual
+
+1. Place the `Get-Warranty/` folder somewhere (e.g. `C:\Tools\Get-Warranty`).
 2. Import the module:
 
 ```powershell
 Import-Module "C:\Tools\Get-Warranty\Get-Warranty.psd1" -Force
 ```
-> Optional: To avoid typing `Import-Module` every time, You can copy the `Get-Warranty` folder into one of the your PS env paths.
+
+> **Tip:** To avoid running `Import-Module` each time, copy the `Get-Warranty` folder into one of the paths listed by `$env:PSModulePath`.
 
 ---
 
-## Uses
+## Usage
 
 #### 1) Check the warranty of the local machine
 
@@ -47,7 +76,7 @@ Import-Module "C:\Tools\Get-Warranty\Get-Warranty.psd1" -Force
 Get-Warranty
 ```
 
-#### 2) Force a manufacturer + serial number
+#### 2) Specify a manufacturer and serial number
 
 ```powershell
 Get-Warranty -Manufacturer asus -Serial "ABCDEFGH1234567"
@@ -57,6 +86,23 @@ Get-Warranty -Manufacturer asus -Serial "ABCDEFGH1234567"
 
 ```powershell
 Get-Warranty -Manufacturer asus -Serial "ABCDEFGH1234567" -Json
+```
+
+#### 4) HP warranty check (opens a WebView2 window)
+
+```powershell
+Get-Warranty -Manufacturer hp -Serial "CND1234567"
+```
+
+A browser window will open on the HP support page.  The serial number is
+auto-filled.  Solve the reCAPTCHA if prompted, then click **Submit**.  The
+window closes automatically once the warranty results are detected and
+extracted.
+
+#### 5) Verbose logging (useful for debugging)
+
+```powershell
+Get-Warranty -Manufacturer asus -Serial "ABCDEFGH1234567" -Verbose
 ```
 
 ---
@@ -72,7 +118,7 @@ Example (indicative format):
   "serial": "ABCDEFGH1234567",
   "product": null,
   "checked_at": "2026-03-10T19:31:43.0000000Z",
-  "source": "asus-eu-rma",
+  "source": "https://eu-rma.asus.com",
   "warranties": [
     {
       "name": "Standard",
@@ -85,7 +131,60 @@ Example (indicative format):
   "meta": {
     "region": "uk",
     "country": "US",
-    "url": "https://eu-rma.asus.com/uk/info/warranty"
+    "url": "https://eu-rma.asus.com/uk/info/warranty",
+    "method": "HTTP"
   }
 }
 ```
+
+> The `meta.method` field indicates the retrieval strategy used (`HTTP` or `WebView2`).
+
+---
+
+## Architecture
+
+```
+Get-Warranty/
+├── Get-Warranty.psd1              Module manifest
+├── Get-Warranty.psm1              Main module (Get-Warranty, Get-LocalDeviceIdentity)
+├── Private/
+│   ├── Format-WarrantyTable.ps1   ASCII table formatter
+│   ├── Initialize-WebView2.ps1    WebView2 Runtime detection & SDK setup
+│   └── Invoke-WebView2Session.ps1 Reusable WebView2 browser session helper
+├── Providers/
+│   ├── Asus.ps1                   ASUS — pure HTTP (EU RMA + CSRF)
+│   ├── Hp.ps1                     HP   — WebView2 (reCAPTCHA)
+│   ├── Dell.ps1                   Dell — stub (planned)
+│   ├── Lenovo.ps1                 Lenovo — stub (planned)
+│   └── Acer.ps1                   Acer — stub (planned)
+├── Lib/                           (no longer used for SDK cache)
+│   └── WebView2/                  (moved to %LOCALAPPDATA%\Get-Warranty\WebView2)
+├── LICENSE                        MIT
+└── README.md
+```
+
+### How providers work
+
+Each provider is a function (`Get-<Manufacturer>Warranty`) that accepts a
+`-Serial` parameter and returns a `[pscustomobject]` with a fixed schema
+(manufacturer, model, serial, warranties[], meta).
+
+* **HTTP providers** (e.g. ASUS) use `Invoke-WebRequest` with session cookies
+  and CSRF tokens.
+* **WebView2 providers** (e.g. HP) call `Invoke-WebView2Session`, which opens
+  a browser window, auto-fills the serial, lets the user solve the captcha,
+  and extracts the result via injected JavaScript.
+
+### Adding a new provider
+
+1. Create `Providers/<Manufacturer>.ps1` with a `Get-<Manufacturer>Warranty`
+   function that returns the standard schema.
+2. Add a `switch` branch in `Get-Warranty.psm1`.
+3. If the site uses reCAPTCHA, use `Invoke-WebView2Session` (see `Hp.ps1` as
+   an example).
+
+---
+
+## License
+
+[MIT](LICENSE)

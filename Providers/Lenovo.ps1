@@ -1,9 +1,11 @@
 function Get-LenovoWarranty {
-    [CmdletBinding()]
-    param(
-        [Parameter(Mandatory)]
-        [string] $Serial
-    )
+  [CmdletBinding()]
+  param(
+    [Parameter(Mandatory)]
+    [string] $Serial
+  )
 
-    throw "Lenovo provider not implemented yet."
+  # Lenovo warranty check (https://pcsupport.lenovo.com/warrantyLookup)
+  # may require reCAPTCHA.  A WebView2-based implementation is planned.
+  throw "Lenovo provider is not yet implemented (WebView2 provider planned)."
 }
