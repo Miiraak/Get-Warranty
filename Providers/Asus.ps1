@@ -5,44 +5,64 @@ function Get-AsusWarranty {
     [string] $Serial,
 
     [Parameter()]
-    [int] $MaximumRedirection = 5
+    [int] $MaximumRedirection = 5,
+
+    [Parameter()]
+    [int] $TimeoutSec = 30
   )
 
-  $base = "https://eu-rma.asus.com"
+  $base     = "https://eu-rma.asus.com"
   $formPath = "/uk/info/warranty"
   $postPath = "/uk/info/warrantyCheck"
 
   $session = New-Object Microsoft.PowerShell.Commands.WebRequestSession
 
-  # PowerShell 5.1: avoid script execution prompt
-  $iwrCommon = @{}
+  # Common Invoke-WebRequest parameters (PS 5.1 compat)
+  $iwrCommon = @{ TimeoutSec = $TimeoutSec }
   if ($PSVersionTable.PSVersion.Major -lt 6) {
     $iwrCommon.UseBasicParsing = $true
   }
 
-  # GET form page to retrieve CSRF token + establish session cookies
-  $r1 = Invoke-WebRequest @iwrCommon -Uri ($base + $formPath) -WebSession $session -Method GET -ErrorAction Stop
+  # ── 1. GET the form page – retrieve CSRF token + cookies ──
+  Write-Verbose "GET $($base + $formPath)"
+  $r1 = Invoke-WebRequest @iwrCommon `
+    -Uri ($base + $formPath) `
+    -WebSession $session `
+    -Method GET `
+    -ErrorAction Stop
 
   $tokenMatch = [regex]::Match($r1.Content, 'name="_token"\s+value="([^"]+)"')
   if (-not $tokenMatch.Success) {
-    throw "ASUS EU RMA: could not find CSRF _token on $($base + $formPath)."
+    throw "ASUS EU RMA: could not extract CSRF _token from $($base + $formPath)."
   }
   $token = $tokenMatch.Groups[1].Value
+  Write-Verbose "CSRF token obtained (length $($token.Length))."
 
-  # POST serial number (Laravel form)
+  # ── 2. POST the serial number ──
   $body = @{
     _token    = $token
     serial_no = $Serial
   }
 
-  $r2 = Invoke-WebRequest @iwrCommon -Uri ($base + $postPath) -WebSession $session -Method POST `
-    -Body $body -ContentType "application/x-www-form-urlencoded" -MaximumRedirection $MaximumRedirection -ErrorAction Stop
+  Write-Verbose "POST $($base + $postPath) (serial: $Serial)"
+  $r2 = Invoke-WebRequest @iwrCommon `
+    -Uri ($base + $postPath) `
+    -WebSession $session `
+    -Method POST `
+    -Body $body `
+    -ContentType "application/x-www-form-urlencoded" `
+    -MaximumRedirection $MaximumRedirection `
+    -ErrorAction Stop
 
   $html = $r2.Content
 
-  # Parse results from <li>Label: value</li>
+  # ── 3. Parse <li> elements ──
   function Get-LiValue([string]$label) {
-    $m = [regex]::Match($html, "<li>\s*$([regex]::Escape($label))\s*:\s*([^<]+)\s*</li>", "IgnoreCase")
+    $m = [regex]::Match(
+      $html,
+      "<li>\s*$([regex]::Escape($label))\s*:\s*([^<]+)\s*</li>",
+      "IgnoreCase"
+    )
     if ($m.Success) { return $m.Groups[1].Value.Trim() }
     return $null
   }
@@ -53,22 +73,27 @@ function Get-AsusWarranty {
   $end     = Get-LiValue "Warranty end date"
 
   if (-not $model -and -not $start -and -not $end) {
-    # Attempt to capture the visible error/explanation text if any
-    $hint = ([regex]::Match($html, "<span[^>]*class=""font-weight-bold""[^>]*>([^<]+)</span>", "IgnoreCase")).Groups[1].Value
-    if (-not $hint) { $hint = "No warranty details found in response HTML." }
+    $hint = ([regex]::Match(
+      $html,
+      '<span[^>]*class="font-weight-bold"[^>]*>([^<]+)</span>',
+      "IgnoreCase"
+    )).Groups[1].Value
+    if (-not $hint) { $hint = "No warranty details found in the response HTML." }
     throw "ASUS EU RMA: lookup failed for serial '$Serial'. $hint"
   }
 
-  # Determine status based on end date
+  # ── 4. Determine warranty status ──
   $status = "unknown"
   if ($end) {
     try {
       $endDate = [datetime]::ParseExact($end, "yyyy-MM-dd", $null)
-      $status = if ($endDate.Date -ge (Get-Date).Date) { "active" } else { "expired" }
+      $status  = if ($endDate.Date -ge (Get-Date).Date) { "active" } else { "expired" }
     } catch {
-      $status = "unknown"
+      Write-Verbose "Could not parse end date '$end' – status remains unknown."
     }
   }
+
+  Write-Verbose "ASUS result: model=$model, start=$start, end=$end, status=$status"
 
   [pscustomobject]@{
     manufacturer = "ASUS"
@@ -90,6 +115,7 @@ function Get-AsusWarranty {
       region  = "uk"
       country = $country
       url     = ($base + $formPath)
+      method  = "HTTP"
     }
   }
 }
