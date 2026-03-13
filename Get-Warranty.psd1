@@ -5,7 +5,7 @@
   Author            = 'Miiraak'
   CompanyName       = ''
   Copyright         = '(c) 2026 Miiraak. MIT License.'
-  Description       = 'Get-Warranty: PowerShell CLI to check device warranty. ASUS (HTTP/CSRF), HP (WebView2). Dell, Lenovo, Acer planned.'
+  Description       = 'Get-Warranty: PowerShell CLI to check device warranty. ASUS (HTTP/CSRF), HP (Chromium Headless / CDP). Dell, Lenovo, Acer planned.'
   PowerShellVersion = '5.1'
 
   FunctionsToExport = @('Get-Warranty')
@@ -19,10 +19,10 @@
       LicenseUri   = ''
       ProjectUri   = ''
       ReleaseNotes = @'
-v0.2.0 – WebView2 integration & HP provider
+v0.2.0 – Chromium Headless HP provider & WebView2 infrastructure
+  • Implemented HP warranty provider via Chromium Headless (CDP).
   • Added WebView2 infrastructure (Initialize-WebView2, Invoke-WebView2Session)
-    for warranty sites that use reCAPTCHA / heavy JavaScript.
-  • Implemented HP warranty provider via WebView2.
+    for future providers that require interactive reCAPTCHA / heavy JavaScript.
   • Optimised ASUS provider (verbose logging, timeout parameter).
   • Improved Format-WarrantyTable null handling.
   • Updated documentation (README, module manifest).
