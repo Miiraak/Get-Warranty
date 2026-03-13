@@ -18,7 +18,7 @@ Minimalist PowerShell module to check the warranty status of a device from the c
 | Manufacturer | Method | Status |
 |:--|:--|:--|
 | ASUS | HTTP – EU RMA Portal (HTML + CSRF token) | ✅ OK |
-| HP | Chromium Headless – support.hp.com (reCAPTCHA token via headless Edge/Chrome + direct API) | ✅ OK |
+| HP | Chromium Headless – support.hp.com (reCAPTCHA token via headless Edge/Chrome + direct API) | :x: Not working |
 | Dell | WebView2 (planned) | ⏳ TODO |
 | Lenovo | WebView2 (planned) | ⏳ TODO |
 | Acer | WebView2 (planned) | ⏳ TODO |
