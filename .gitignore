@@ -1,5 +1,0 @@
-# WebView2 SDK (downloaded at runtime by Initialize-WebView2)
-Lib/
-
-# PowerShell artifacts
-*.log
