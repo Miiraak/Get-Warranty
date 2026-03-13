@@ -173,9 +173,11 @@ Each provider is a function (`Get-<Manufacturer>Warranty`) that accepts a
 * **HTTP providers** (e.g. ASUS) use `Invoke-WebRequest` with session cookies
   and CSRF tokens.
 * **Chromium Headless providers** (e.g. HP) use `Get-ChromiumPath` to locate
-  Edge or Chrome, launch it with `--headless --dump-dom` to harvest a
-  reCAPTCHA v3 token, then call the manufacturer's backend API directly.
-  No GUI window, no user interaction, no extra dependencies.
+  Edge or Chrome, launch it with `--headless --remote-debugging-port` and
+  connect via CDP (Chrome DevTools Protocol) to harvest a reCAPTCHA Enterprise
+  token, then call the manufacturer's backend API directly via `fetch()`
+  inside the browser context. No GUI window, no user interaction, no extra
+  dependencies.
 * **WebView2 providers** (future) call `Invoke-WebView2Session`, which opens
   a browser window, auto-fills the serial, lets the user solve the captcha,
   and extracts the result via injected JavaScript.
@@ -186,7 +188,7 @@ Each provider is a function (`Get-<Manufacturer>Warranty`) that accepts a
    function that returns the standard schema.
 2. Add a `switch` branch in `Get-Warranty.psm1`.
 3. For reCAPTCHA sites with a known backend API, use `Get-ChromiumPath` and
-   `--dump-dom` to get the token (see `Hp.ps1`).
+   CDP (Chrome DevTools Protocol) to get the token (see `Hp.ps1`).
 4. For sites without a direct API, use `Invoke-WebView2Session` for interactive
    captcha solving.
 
