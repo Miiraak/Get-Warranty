@@ -22,7 +22,7 @@ Minimalist PowerShell module to check the warranty status of a device from the c
 | Lenovo | TBD | ⏳ TODO |
 | Acer | TBD | ⏳ TODO |
 
-> **Note :** ASUS uses the EU RMA portal (`eu-rma.asus.com`) instead of `www.asus.com` to avoid reCAPTCHA blocking.
+> **Note:** ASUS uses the EU RMA portal (`eu-rma.asus.com`) instead of `www.asus.com` to avoid reCAPTCHA blocking.
 
 ---
 
