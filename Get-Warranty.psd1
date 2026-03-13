@@ -15,7 +15,7 @@
 
   PrivateData = @{
     PSData = @{
-      Tags         = @('warranty','asus','hp','dell','lenovo','acer','cli','webview2')
+      Tags         = @('warranty','asus','hp','dell','lenovo','acer','cli')
       LicenseUri   = ''
       ProjectUri   = ''
       ReleaseNotes = @'
